@@ -25,7 +25,7 @@ jobs:
     env:
       HOMEBREW_NO_AUTO_UPDATE: '1'
       HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
-      DD: ${{ runner.temp }}/husk_ipa
+      DD: /tmp/husk_ipa
     steps:
       - name: Obtener codigo de la copia de Hrc1000
         uses: actions/checkout@v4
