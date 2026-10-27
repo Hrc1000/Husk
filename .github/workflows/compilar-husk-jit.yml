@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/compilar-husk-jit.yml'
       - 'src/app/Husk/JITSetup.swift'
+      - 'src/app/Husk/ProfileView.swift'
       - 'src/app/HuskJITHelper/**'
       - 'src/app/Husk/Info.plist'
   workflow_dispatch:
@@ -141,6 +142,6 @@ jobs:
         with:
           name: Husk-JIT-logs
           path: |
-            ${{ runner.temp }}/husk_ipa/build.log
+            /tmp/husk_ipa/build.log
           if-no-files-found: ignore
           retention-days: 7
