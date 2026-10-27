@@ -440,6 +440,7 @@ enum LocalDevVPN {
 enum RemotePairingPortDiscovery {
     private static let serviceType = "_remotepairing._tcp"
     private static let queue = DispatchQueue(label: "com.husk.app.remotepairing-discovery", qos: .utility)
+    private static let networkQueue = DispatchQueue(label: "com.husk.app.remotepairing-network", qos: .utility)
     private static let lock = NSLock()
     private static var cachedPort: UInt16?
     private static var lastFailure: Date?
@@ -536,7 +537,7 @@ enum RemotePairingPortDiscovery {
                     break
                 }
             }
-            connection.start(queue: queue)
+            connection.start(queue: networkQueue)
         }
 
         browser.stateUpdateHandler = { state in
@@ -548,7 +549,7 @@ enum RemotePairingPortDiscovery {
             }
         }
 
-        browser.start(queue: queue)
+        browser.start(queue: networkQueue)
         _ = semaphore.wait(timeout: .now() + timeout)
         browser.cancel()
 
