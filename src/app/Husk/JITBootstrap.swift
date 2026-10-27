@@ -3,6 +3,18 @@ import Foundation
 import UIKit
 import os
 
+// The iOS 15-25 self-granting path is optional in older native builds.
+// Husk 3.0's QEMU library does not export this newer function; resolve it
+// dynamically so the iOS 27 debugger-based JIT path can still link.
+private func huskSelfPrewarmIfAvailable(_ bytes: Int) -> Bool {
+    guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2),
+                             "husk_ios_jit_prewarm_self") else {
+        return false
+    }
+    typealias PrewarmFunction = @convention(c) (Int) -> Bool
+    return unsafeBitCast(symbol, to: PrewarmFunction.self)(bytes)
+}
+
 /// `csops(2)`. Reading CS_DEBUGGED is how we ask "is a debugger attached right
 /// now" without executing anything — unlike the brk probe, which costs a trap.
 @_silgen_name("csops")
@@ -100,7 +112,7 @@ enum JITBootstrap {
             // process or a jailbreak allows -- made here, with no brk for an attach that answers none (#148)
             HuskLog.log("jit", "not trapping for a JIT region (no StikDebug); MAP_JIT does not execute here, trying plain memory")
             prepareCompressedHeap()
-            if husk_ios_jit_prewarm_self(jitBytes) {
+            if huskSelfPrewarmIfAvailable(jitBytes) {
                 prewarmed = true
                 lastFailure = nil
                 HuskLog.log("jit", "JIT region made by Husk itself (\(husk_ios_jit_self_route().map { String(cString: $0) } ?? "self"))")
