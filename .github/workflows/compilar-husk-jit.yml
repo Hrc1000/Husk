@@ -1,0 +1,146 @@
+name: Compilar Husk con JIT corregido
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/compilar-husk-jit.yml'
+      - 'src/app/Husk/JITSetup.swift'
+      - 'src/app/HuskJITHelper/**'
+      - 'src/app/Husk/Info.plist'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: husk-jit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ipa:
+    name: Construir Husk.ipa para ESign
+    runs-on: macos-26
+    timeout-minutes: 150
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+      DD: ${{ runner.temp }}/husk_ipa
+    steps:
+      - name: Obtener codigo de la copia de Hrc1000
+        uses: actions/checkout@v4
+
+      - name: Confirmar los dos arreglos del JIT
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'enum RemotePairingPortDiscovery' src/app/Husk/JITSetup.swift
+          grep -q 'browser.start(queue: networkQueue)' src/app/Husk/JITSetup.swift
+          grep -q 'connection.start(queue: networkQueue)' src/app/Husk/JITSetup.swift
+          echo 'Deteccion dinamica del puerto y correccion de bloqueo presentes.'
+
+      - name: Seleccionar Xcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          XC="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' | sort -V | tail -1)"
+          test -n "$XC"
+          sudo xcode-select -s "$XC/Contents/Developer"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Instalar solo las herramientas necesarias
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen qemu
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --fail --silent --show-error https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup target add aarch64-apple-ios
+
+      - name: Preparar bibliotecas verificadas de la IPA oficial 3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 3 --retry-delay 3 \
+            'https://github.com/Leviidev/Husk/releases/download/3.0/Husk.ipa' \
+            -o "$RUNNER_TEMP/Husk-3.0.ipa"
+          unzip -q "$RUNNER_TEMP/Husk-3.0.ipa" -d "$RUNNER_TEMP/husk-oficial"
+          APP="$RUNNER_TEMP/husk-oficial/Payload/Husk.app"
+          test -d "$APP"
+          mkdir -p build/ios-arm64/lib build/ios-arm64/sysroot/lib \
+                   third_party/build/qemu-10.0.12-utm/pc-bios guests/phase0
+
+          # La modificacion JIT afecta codigo Swift, no estos binarios nativos.
+          for LIB in libqemu-aarch64-softmmu.dylib libhuskps4.dylib; do
+            test -s "$APP/Frameworks/$LIB"
+            cp "$APP/Frameworks/$LIB" build/ios-arm64/lib/
+          done
+          test -s "$APP/Frameworks/libANGLE-shared.dylib"
+          cp "$APP/Frameworks/libANGLE-shared.dylib" build/ios-arm64/sysroot/lib/
+
+          # Xcode necesita MoltenVK.xcframework; la IPA distribuye MoltenVK.framework.
+          test -d "$APP/Frameworks/MoltenVK.framework"
+          xcodebuild -create-xcframework \
+            -framework "$APP/Frameworks/MoltenVK.framework" \
+            -output "$PWD/build/ios-arm64/lib/MoltenVK.xcframework"
+
+          # El proyecto comprueba estos archivos antes de compilar.
+          for F in vmlinuz-virt initramfs-virt; do
+            test -s "$APP/$F"
+            cp "$APP/$F" "guests/phase0/$F"
+          done
+          test -s "$APP/edk2-aarch64-code.fd"
+          bzip2 -c "$APP/edk2-aarch64-code.fd" \
+            > third_party/build/qemu-10.0.12-utm/pc-bios/edk2-aarch64-code.fd.bz2
+          if [ -d "$APP/pc-bios" ]; then
+            cp "$APP/pc-bios/"*.rom third_party/build/qemu-10.0.12-utm/pc-bios/ 2>/dev/null || true
+          fi
+
+          # Mantener los recursos originales de Android/Java cuando existan.
+          if [ -d "$APP/java-runtime" ]; then
+            mkdir -p build/java-runtime
+            rsync -a "$APP/java-runtime/" build/java-runtime/
+          fi
+          if [ -d "$APP/android-system" ]; then
+            mkdir -p build/android-system
+            rsync -a "$APP/android-system/" build/android-system/
+          fi
+          echo 'Bibliotecas y recursos base preparados.'
+
+      - name: Compilar modulo de emparejamiento local para JIT
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/build_rppairing_ios.sh
+          test -s build/ios-arm64/lib/libhusk_rppairing.a
+
+      - name: Compilar app y generar IPA nueva
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/package_ipa.sh "$RUNNER_TEMP/Husk-JIT-corregido.ipa"
+          test -s "$RUNNER_TEMP/Husk-JIT-corregido.ipa"
+          unzip -tq "$RUNNER_TEMP/Husk-JIT-corregido.ipa" | tail -2
+
+      - name: Publicar IPA para firmarla con ESign
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Husk-JIT-corregido
+          path: ${{ runner.temp }}/Husk-JIT-corregido.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Conservar registro si hay error
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Husk-JIT-logs
+          path: |
+            ${{ runner.temp }}/husk_ipa/build.log
+          if-no-files-found: ignore
+          retention-days: 7
