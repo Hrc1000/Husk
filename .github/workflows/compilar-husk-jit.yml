@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/compilar-husk-jit.yml'
       - 'src/app/Husk/JITSetup.swift'
+      - 'src/app/Husk/JITBootstrap.swift'
       - 'src/app/Husk/ProfileView.swift'
       - 'src/app/HuskJITHelper/**'
       - 'src/app/Husk/Info.plist'
